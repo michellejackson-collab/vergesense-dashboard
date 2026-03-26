@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VergeSense Deployment Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f172a;color:#fff;font-family:system-ui,-apple-system,sans-serif;min-height:100vh}
+input,textarea,select{font-family:inherit}
+a{color:inherit;text-decoration:none}
+::-webkit-scrollbar{height:4px;width:4px}
+::-webkit-scrollbar-track{background:#1e293b}
+::-webkit-scrollbar-thumb{background:#475569;border-radius:2px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const SITE_URL = "https://vs-deployments.github.io/vsdash/";
+const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+const getProjectUrl = id => SITE_URL + "#project-" + id;
+const today = () => new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+
+const BLANK = (clientName="", siteName="", floorName="") => ({
+  id: slugify((clientName||"new")+"-"+(siteName||"site")+"-"+(floorName||""))+"-"+Date.now(),
+
+  // ── LAYER 1: Executive ──
+  clientName, siteName, floorName,
+  projectPhase:"Pre-Install", status:"Green",
+  internalOwner:"", nextActionOwner:"", nextMilestone:"",
+  installDate:"", goLiveTarget:"",
+  blockerPresent:"N", blockerText:"",
+  escalation:"N", lastUpdated:today(),
+
+  // ── LAYER 2: PM Control ──
+  // Client deliverables
+  metadataReceived:"N", floorPlansReceived:"N", networkConfirmed:"N",
+  accessApproved:"N", coiSubmitted:"N", shippingInfoConfirmed:"N",
+  // Internal deliverables
+  oppCreated:"N", hardwareOrdered:"N", markupsComplete:"N",
+  techAssigned:"N", whatsappCreated:"N", installScheduled:"N",
+  validationRequested:"N", csHandoff:"N",
+  // Dates
+  kickoffDate:"", lastClientTouchpoint:"", lastInternalUpdate:"",
+  // Blockers
+  blockerWhat:"", blockerOwner:"", blockerSince:"",
+
+  // ── LAYER 3: Full Detail ──
+  projectType:"New Deployment", salesforceLink:"",
+  pocName:"", pocEmail:"", pocPhone:"",
+  orderStatus:"Ordered", devices:[], wifiConfigRequired:"N",
+  siteAddress:"", shippingAddress:"", shippingAttn:"",
+  shipped:"N", shipCarrier:"", trackingNumber:"", trackingLink:"", deliveryDate:"",
+  networkType:"WiFi", networkConfigIn1P:"N",
+  coiRequired:"N", ppe:"", unionRules:"", workHours:"",
+  accessType:"Badge Access", accessName:"", accessEmail:"", accessPhone:"", accessNote:"",
+  siteSurveyLink:"", ceilingType:"", mountingType:"",
+  networkReady:"N", powerAvailable:"N", devicesConfigured:"N", usbRequired:"N",
+  installerName:"", selfInstall:"N", construction:"N",
+  addedToInstallTool:"N", whatsappLink:"",
+  risks:"", nextSteps:"", notes:[],
+});
+
+const SC = {
+  Green:  {bg:"#10b981",dot:"#34d399",ring:"#34d399",label:"On Track"},
+  Yellow: {bg:"#f59e0b",dot:"#fbbf24",ring:"#fbbf24",label:"At Risk"},
+  Red:    {bg:"#ef4444",dot:"#f87171",ring:"#f87171",label:"Blocked"},
+};
+const PHASES = ["Pre-Install","Kickoff","In Progress","Installing","Validation","Go-Live","Complete"];
+const ORDER  = ["Ordered","Shipped","Delivered","Client Confirmed","Installed"];
+const OCOL   = ["#8b5cf6","#3b82f6","#06b6d4","#f59e0b","#10b981"];
+
+const YN = ({val,set,size="normal"}) => {
+  const h = size==="small" ? 22 : 28;
+  const w = size==="small" ? 26 : 32;
+  return (
+    <div style={{display:"flex",gap:3}}>
+      {["Y","N"].map(o=>(
+        <button key={o} onClick={()=>set(o)}
+          style={{width:w,height:h,borderRadius:6,border:"none",fontWeight:700,
+            fontSize:size==="small"?10:11,cursor:"pointer",
+            background:val===o?(o==="Y"?"#10b981":"#ef4444"):"#334155",
+            color:val===o?"#fff":"#94a3b8"}}>
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const EI = ({value,onChange,style,placeholder}) => (
+  <input value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder||""}
+    style={{background:"transparent",border:"none",borderBottom:"1px dashed #475569",
+      color:"inherit",fontSize:13,width:"100%",outline:"none",padding:"2px 0",...(style||{})}}/>
+);
+
+const Card = ({children,style}) => (
+  <div style={{background:"#1e293b",borderRadius:16,border:"1px solid #334155",padding:16,...(style||{})}}>{children}</div>
+);
+
+const SL = ({children,color}) => (
+  <div style={{fontSize:11,color:color||"#64748b",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:10}}>{children}</div>
+);
+
+const DelivCheck = ({label,val,set,editMode}) => (
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+    padding:"5px 0",borderBottom:"1px solid #1e293b"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <div style={{width:16,height:16,borderRadius:4,flexShrink:0,cursor:editMode?"pointer":"default",
+        background:val==="Y"?"#10b981":"#334155",border:"1px solid "+(val==="Y"?"#10b981":"#475569"),
+        display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",fontWeight:700}}
+        onClick={()=>editMode&&set(val==="Y"?"N":"Y")}>
+        {val==="Y"&&"✓"}
+      </div>
+      <span style={{fontSize:12,color:val==="Y"?"#94a3b8":"#cbd5e1",
+        textDecoration:val==="Y"?"line-through":"none"}}>{label}</span>
+    </div>
+  </div>
+);
+
+function CopyLinkBtn({projectId}) {
+  const [copied,setCopied]=useState(false);
+  const copy = e => {
+    e&&e.stopPropagation();
+    const url=getProjectUrl(projectId);
+    const fb=()=>{const t=document.createElement("textarea");t.value=url;document.body.appendChild(t);t.select();document.execCommand("copy");document.body.removeChild(t);};
+    if(navigator.clipboard) navigator.clipboard.writeText(url).then(()=>{}).catch(fb);
+    else fb();
+    setCopied(true); setTimeout(()=>setCopied(false),2500);
+  };
+  return(
+    <button onClick={copy} style={{background:copied?"#10b981":"#334155",color:copied?"#fff":"#94a3b8",border:"none",borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all 0.2s",whiteSpace:"nowrap"}}>
+      {copied?"✅ Copied!":"🔗 Copy Link"}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PROJECT LIST
+// ─────────────────────────────────────────────
+function ProjectList({projects,onOpen,onCreate,onDelete}) {
+  const [showNew,setShowNew]=useState(false);
+  const [name,setName]=useState("");
+  const [site,setSite]=useState("");
+  const [floor,setFloor]=useState("");
+
+  const handleCreate=()=>{
+    if(!name.trim())return;
+    onCreate(name.trim(),site.trim(),floor.trim());
+    setName("");setSite("");setFloor("");setShowNew(false);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0f172a",padding:24}}>
+      <div style={{maxWidth:1000,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28,flexWrap:"wrap",gap:16}}>
+          <div>
+            <div style={{fontSize:24,fontWeight:900,color:"#fff",marginBottom:4}}>⚡ VergeSense <span style={{color:"#6366f1"}}>Deployments</span></div>
+            <div style={{fontSize:12,color:"#475569"}}>All Projects · One Place</div>
+          </div>
+          <button onClick={()=>setShowNew(v=>!v)} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:12,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {showNew?"✕ Cancel":"+ New Project"}
+          </button>
+        </div>
+
+        {showNew&&(
+          <Card style={{marginBottom:24,border:"1px solid #6366f1"}}>
+            <SL>🆕 New Project</SL>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:16}}>
+              {[["Client Name",name,setName,"e.g. Acme Corp"],["Site Name",site,setSite,"e.g. HQ"],["Floor",floor,setFloor,"e.g. Floor 12"]].map(([lbl,val,setter,ph])=>(
+                <div key={lbl}>
+                  <div style={{fontSize:11,color:"#64748b",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em",fontWeight:600}}>{lbl}</div>
+                  <input value={val} onChange={e=>setter(e.target.value)} placeholder={ph} onKeyDown={e=>e.key==="Enter"&&handleCreate()}
+                    style={{width:"100%",background:"#0f172a",border:"1px solid #334155",color:"#fff",fontSize:13,borderRadius:8,padding:"8px 12px",outline:"none",fontFamily:"inherit"}}/>
+                </div>
+              ))}
+            </div>
+            <button onClick={handleCreate} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create Dashboard →</button>
+          </Card>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:24}}>
+          {[{l:"Total",v:projects.length,c:"#818cf8"},{l:"On Track",v:projects.filter(p=>p.status==="Green").length,c:"#34d399"},
+            {l:"At Risk",v:projects.filter(p=>p.status==="Yellow").length,c:"#fbbf24"},{l:"Blocked",v:projects.filter(p=>p.status==="Red").length,c:"#f87171"}].map(({l,v,c})=>(
+            <Card key={l} style={{textAlign:"center",padding:16}}>
+              <div style={{fontSize:28,fontWeight:900,color:c,marginBottom:4}}>{v}</div>
+              <div style={{fontSize:11,color:"#64748b",textTransform:"uppercase",letterSpacing:"0.05em"}}>{l}</div>
+            </Card>
+          ))}
+        </div>
+
+        {projects.length===0?(
+          <Card style={{textAlign:"center",padding:48}}>
+            <div style={{fontSize:40,marginBottom:16}}>📋</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#fff",marginBottom:8}}>No projects yet</div>
+            <div style={{fontSize:13,color:"#475569"}}>Click "+ New Project" to get started</div>
+          </Card>
+        ):(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+            {projects.map(p=>{
+              const sc=SC[p.status]||SC.Green;
+              const pct=Math.round([p.networkReady,p.powerAvailable,p.devicesConfigured].filter(x=>x==="Y").length/3*100);
+              return(
+                <Card key={p.id} style={{cursor:"pointer"}} onClick={()=>onOpen(p.id)}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                        <div style={{width:10,height:10,borderRadius:"50%",background:sc.dot,flexShrink:0}}/>
+                        <div style={{fontSize:15,fontWeight:800,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.clientName||"Unnamed"}</div>
+                      </div>
+                      <div style={{fontSize:12,color:"#6366f1",fontWeight:600,marginBottom:2}}>{p.siteName||"—"}{p.floorName?" · "+p.floorName:""}</div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+                        <span style={{fontSize:10,background:"#1e3a5f",color:"#93c5fd",borderRadius:6,padding:"2px 8px",fontWeight:600}}>{p.projectPhase||"Pre-Install"}</span>
+                        <span style={{fontSize:10,background:sc.bg,color:"#fff",borderRadius:6,padding:"2px 8px",fontWeight:700}}>{sc.label}</span>
+                        {p.blockerPresent==="Y"&&<span style={{fontSize:10,background:"#450a0a",color:"#f87171",borderRadius:6,padding:"2px 8px",fontWeight:700}}>🚨 Blocked</span>}
+                        {p.escalation==="Y"&&<span style={{fontSize:10,background:"#451a03",color:"#fbbf24",borderRadius:6,padding:"2px 8px",fontWeight:700}}>⚠️ Escalated</span>}
+                      </div>
+                    </div>
+                    <button onClick={e=>{e.stopPropagation();window.confirm("Delete this project?")&&onDelete(p.id);}}
+                      style={{background:"transparent",border:"none",color:"#334155",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}
+                      onMouseOver={e=>e.target.style.color="#ef4444"} onMouseOut={e=>e.target.style.color="#334155"}>×</button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                    {[{l:"Install Date",v:p.installDate||"TBD",c:"#fbbf24"},{l:"Go-Live",v:p.goLiveTarget||"TBD",c:"#34d399"},
+                      {l:"Owner",v:p.internalOwner||"—",c:"#94a3b8"},{l:"Next Action",v:p.nextActionOwner||"—",c:"#c4b5fd"}].map(({l,v,c})=>(
+                      <div key={l} style={{background:"#0f172a",borderRadius:8,padding:"5px 8px"}}>
+                        <div style={{fontSize:9,color:"#475569",marginBottom:1}}>{l}</div>
+                        <div style={{fontSize:11,fontWeight:700,color:c,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {p.nextMilestone&&<div style={{background:"rgba(99,102,241,0.1)",border:"1px solid rgba(99,102,241,0.3)",borderRadius:8,padding:"5px 10px",marginBottom:10,fontSize:11,color:"#a5b4fc"}}>🎯 {p.nextMilestone}</div>}
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                    <div style={{flex:1,background:"#0f172a",borderRadius:4,height:4}}>
+                      <div style={{height:4,borderRadius:4,width:pct+"%",background:pct===100?"#10b981":"#f59e0b",transition:"width 0.3s"}}/>
+                    </div>
+                    <span style={{fontSize:10,fontWeight:700,color:pct===100?"#34d399":"#fbbf24",flexShrink:0}}>{pct}% ready</span>
+                  </div>
+                  <div style={{borderTop:"1px solid #334155",paddingTop:8,display:"flex",alignItems:"center",gap:8}} onClick={e=>e.stopPropagation()}>
+                    <div style={{flex:1,background:"#0f172a",borderRadius:8,padding:"5px 8px",overflow:"hidden"}}>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:1}}>Direct Link</div>
+                      <div style={{fontSize:9,color:"#818cf8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{getProjectUrl(p.id)}</div>
+                    </div>
+                    <CopyLinkBtn projectId={p.id}/>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+        <div style={{textAlign:"center",fontSize:11,color:"#1e293b",marginTop:32}}>VergeSense Deployment Dashboard · Internal Use Only</div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PROJECT DASHBOARD (3-Layer)
+// ─────────────────────────────────────────────
+function ProjectDashboard({project,onSave,onBack}) {
+  const [d,setD]=useState(project);
+  const [edit,setEdit]=useState(false);
+  const [detailTab,setDetailTab]=useState("shipping");
+  const [layer3Open,setLayer3Open]=useState(false);
+  const [linkCopied,setLinkCopied]=useState(false);
+  const [newNote,setNewNote]=useState("");
+  const [newAuthor,setNewAuthor]=useState("");
+  const [showAddNote,setShowAddNote]=useState(false);
+
+  useEffect(()=>{ onSave(d); },[d]);
+
+  const s=k=>v=>setD(p=>({...p,[k]:v}));
+  const sc=SC[d.status]||SC.Green;
+  const oidx=ORDER.indexOf(d.orderStatus);
+  const readyArr=[d.networkReady,d.powerAvailable,d.devicesConfigured];
+  const finalGo=readyArr.every(x=>x==="Y");
+  const pct=Math.round(readyArr.filter(x=>x==="Y").length/3*100);
+
+  const addDev=()=>setD(p=>({...p,devices:[...p.devices,{type:"",qty:"",shipListLink:""}]}));
+  const updDev=(i,k,v)=>setD(p=>{const devs=[...p.devices];devs[i]={...devs[i],[k]:v};return{...p,devices:devs};});
+  const delDev=i=>setD(p=>({...p,devices:p.devices.filter((_,x)=>x!==i)}));
+
+  const saveNote=()=>{
+    if(!newNote.trim())return;
+    setD(p=>({...p,notes:[{id:Date.now(),author:newAuthor||"You",date:today(),text:newNote.trim(),pinned:false},...p.notes]}));
+    setNewNote("");setNewAuthor("");setShowAddNote(false);
+  };
+  const delNote=id=>setD(p=>({...p,notes:p.notes.filter(n=>n.id!==id)}));
+  const pinNote=id=>setD(p=>({...p,notes:p.notes.map(n=>n.id===id?{...n,pinned:!n.pinned}:n)}));
+  const pinned=d.notes.filter(n=>n.pinned);
+  const initials=name=>name?name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase():"??";
+
+  const copyLink=()=>{
+    const url=getProjectUrl(d.id);
+    const fb=()=>{const t=document.createElement("textarea");t.value=url;document.body.appendChild(t);t.select();document.execCommand("copy");document.body.removeChild(t);};
+    if(navigator.clipboard) navigator.clipboard.writeText(url).then(()=>{}).catch(fb); else fb();
+    setLinkCopied(true); setTimeout(()=>setLinkCopied(false),2500);
+  };
+
+  // Deliverable progress
+  const clientDelivs = ["metadataReceived","floorPlansReceived","networkConfirmed","accessApproved","coiSubmitted","shippingInfoConfirmed"];
+  const internalDelivs = ["oppCreated","hardwareOrdered","markupsComplete","techAssigned","whatsappCreated","installScheduled","validationRequested","csHandoff"];
+  const clientPct = Math.round(clientDelivs.filter(k=>d[k]==="Y").length/clientDelivs.length*100);
+  const internalPct = Math.round(internalDelivs.filter(k=>d[k]==="Y").length/internalDelivs.length*100);
+
+  const clientDelivLabels = {metadataReceived:"Metadata received",floorPlansReceived:"Floor plans received",networkConfirmed:"Network confirmed",accessApproved:"Access approved",coiSubmitted:"COI submitted",shippingInfoConfirmed:"Shipping info confirmed"};
+  const internalDelivLabels = {oppCreated:"Opp created",hardwareOrdered:"Hardware ordered",markupsComplete:"Markups complete",techAssigned:"Tech assigned",whatsappCreated:"WhatsApp created",installScheduled:"Install scheduled",validationRequested:"Validation requested",csHandoff:"CS handoff"};
+
+  const taStyle={background:"#334155",border:"1px solid #475569",color:"#e2e8f0",fontSize:13,width:"100%",outline:"none",padding:"8px 12px",borderRadius:8,resize:"none",fontFamily:"inherit"};
+  const selStyle={background:"#334155",border:"1px solid #475569",color:"#fff",fontSize:13,width:"100%",outline:"none",padding:"8px 12px",borderRadius:8,fontFamily:"inherit"};
+  const iRow={display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid #334155",gap:12};
+  const iLbl={fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0};
+
+  const DETAIL_TABS=[
+    {id:"shipping",label:"📦 Shipping"},{id:"network",label:"🌐 Network"},
+    {id:"site",label:"🏗️ Site"},{id:"devices",label:"🖥️ Devices"},
+    {id:"notes",label:"📝 Notes"+(d.notes.length>0?" ("+d.notes.length+")":"")},
+  ];
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0f172a"}}>
+
+      {/* ══ GLOBAL TOPBAR ══ */}
+      <div style={{borderBottom:"1px solid #1e293b",padding:"10px 20px",background:"#0f172a",position:"sticky",top:0,zIndex:100}}>
+        <div style={{maxWidth:1200,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <button onClick={onBack} style={{background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>← All Projects</button>
+            <div style={{width:10,height:10,borderRadius:"50%",background:sc.dot,boxShadow:"0 0 0 2px "+sc.ring}}/>
+            {edit?(
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <EI value={d.clientName} onChange={s("clientName")} style={{color:"#fff",fontWeight:900,fontSize:14,width:110}}/>
+                <span style={{color:"#475569"}}>·</span>
+                <EI value={d.siteName} onChange={s("siteName")} style={{color:"#818cf8",fontWeight:900,fontSize:14,width:110}}/>
+                <span style={{color:"#475569"}}>·</span>
+                <EI value={d.floorName} onChange={s("floorName")} style={{color:"#94a3b8",fontSize:12,width:80}}/>
+              </div>
+            ):(
+              <div style={{fontSize:15,fontWeight:900}}>
+                {d.clientName||"New Project"}<span style={{color:"#475569",margin:"0 4px"}}>·</span>
+                <span style={{color:"#818cf8"}}>{d.siteName}</span>
+                {d.floorName&&<span style={{color:"#64748b",fontWeight:400,fontSize:13}}> · {d.floorName}</span>}
+              </div>
+            )}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={copyLink} style={{background:linkCopied?"#10b981":"#0f172a",color:linkCopied?"#fff":"#818cf8",border:"1px solid "+(linkCopied?"#10b981":"#6366f1"),borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all 0.2s"}}>
+              {linkCopied?"✅ Copied!":"🔗 Copy Project Link"}
+            </button>
+            {pinned.length>0&&<div style={{background:"#451a03",border:"1px solid #92400e",borderRadius:8,padding:"4px 10px",fontSize:11,color:"#fcd34d",fontWeight:700}}>📌 {pinned.length}</div>}
+            <div style={{background:sc.bg,color:"#fff",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:900}}>{sc.label}</div>
+            <button onClick={()=>setEdit(e=>!e)} style={{background:edit?"#4f46e5":"#1e293b",color:edit?"#fff":"#94a3b8",border:"1px solid "+(edit?"#6366f1":"#334155"),borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              {edit?"✏️ Done":"✏️ Edit"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {linkCopied&&<div style={{background:"#10b981",padding:"8px",textAlign:"center",fontSize:12,fontWeight:700,color:"#fff"}}>✅ Link copied! Paste into your Google Drive project folder.</div>}
+
+      <div style={{maxWidth:1200,margin:"0 auto",padding:"20px"}}>
+
+        {/* ══════════════════════════════════════════
+            LAYER 1 — EXECUTIVE VIEW
+        ══════════════════════════════════════════ */}
+        <div style={{marginBottom:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <div style={{width:3,height:20,background:"#6366f1",borderRadius:2}}/>
+            <span style={{fontSize:12,fontWeight:700,color:"#6366f1",textTransform:"uppercase",letterSpacing:"0.1em"}}>Layer 1 — Executive View</span>
+            <span style={{fontSize:11,color:"#334155"}}>30-second scan</span>
+          </div>
+        </div>
+
+        {/* Blocker / Escalation banners */}
+        {(d.blockerPresent==="Y"||d.escalation==="Y")&&(
+          <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+            {d.blockerPresent==="Y"&&(
+              <div style={{flex:1,minWidth:250,background:"rgba(239,68,68,0.1)",border:"1px solid #ef4444",borderRadius:12,padding:"10px 16px",display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{fontSize:18,flexShrink:0}}>🚨</span>
+                <div><div style={{fontSize:12,fontWeight:700,color:"#f87171",marginBottom:2}}>BLOCKER</div>
+                <div style={{fontSize:12,color:"#fca5a5"}}>{d.blockerText||"Blocker present — add details in Layer 2"}</div></div>
+              </div>
+            )}
+            {d.escalation==="Y"&&(
+              <div style={{flex:1,minWidth:250,background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:12,padding:"10px 16px",display:"flex",gap:10,alignItems:"center"}}>
+                <span style={{fontSize:18}}>⚠️</span>
+                <div style={{fontSize:12,fontWeight:700,color:"#fbbf24"}}>ESCALATION REQUIRED</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <Card style={{marginBottom:16,background:"linear-gradient(135deg,#1e293b,#1a2540)"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>
+            {/* Phase */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Project Phase</div>
+              {edit?(
+                <select value={d.projectPhase||"Pre-Install"} onChange={e=>s("projectPhase")(e.target.value)} style={{...selStyle,background:"transparent",border:"1px solid rgba(99,102,241,0.3)",color:"#a5b4fc",fontSize:12,padding:"4px 8px"}}>
+                  {PHASES.map(p=><option key={p}>{p}</option>)}
+                </select>
+              ):<div style={{fontSize:14,fontWeight:700,color:"#a5b4fc"}}>{d.projectPhase||"Pre-Install"}</div>}
+            </div>
+
+            {/* Status */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Status</div>
+              {edit
+                ?<div style={{display:"flex",gap:4}}>{["Green","Yellow","Red"].map(c=><button key={c} onClick={()=>s("status")(c)} style={{flex:1,padding:"4px 0",borderRadius:6,border:"none",fontWeight:700,fontSize:10,cursor:"pointer",background:d.status===c?SC[c].bg:"#334155",color:"#fff"}}>{c}</button>)}</div>
+                :<div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:10,height:10,borderRadius:"50%",background:sc.dot}}/><span style={{fontSize:14,fontWeight:700,color:"#fff"}}>{sc.label}</span></div>}
+            </div>
+
+            {/* Internal Owner */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Internal Owner</div>
+              {edit?<EI value={d.internalOwner} onChange={s("internalOwner")} style={{color:"#c4b5fd",fontWeight:600}} placeholder="Name"/>
+                   :<div style={{fontSize:14,fontWeight:700,color:"#c4b5fd"}}>{d.internalOwner||"—"}</div>}
+            </div>
+
+            {/* Next Action Owner */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Next Action Owner</div>
+              {edit?<EI value={d.nextActionOwner} onChange={s("nextActionOwner")} style={{color:"#e2e8f0",fontWeight:600}} placeholder="Name"/>
+                   :<div style={{fontSize:14,fontWeight:700,color:"#e2e8f0"}}>{d.nextActionOwner||"—"}</div>}
+            </div>
+
+            {/* Install Date */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Install Date</div>
+              {edit?<EI value={d.installDate} onChange={s("installDate")} style={{color:"#fbbf24",fontWeight:600}} placeholder="MM/DD/YYYY"/>
+                   :<div style={{fontSize:14,fontWeight:700,color:"#fbbf24"}}>{d.installDate||"TBD"}</div>}
+            </div>
+
+            {/* Go-Live Target */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Go-Live Target</div>
+              {edit?<EI value={d.goLiveTarget} onChange={s("goLiveTarget")} style={{color:"#34d399",fontWeight:600}} placeholder="MM/DD/YYYY"/>
+                   :<div style={{fontSize:14,fontWeight:700,color:"#34d399"}}>{d.goLiveTarget||"TBD"}</div>}
+            </div>
+
+            {/* Blocker */}
+            <div style={{background:d.blockerPresent==="Y"?"rgba(239,68,68,0.1)":"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid "+(d.blockerPresent==="Y"?"rgba(239,68,68,0.4)":"rgba(99,102,241,0.2)")}}>
+              <div style={{fontSize:10,color:d.blockerPresent==="Y"?"#f87171":"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>🚨 Blocker</div>
+              {edit
+                ?<div><YN val={d.blockerPresent} set={s("blockerPresent")} size="small"/>
+                  {d.blockerPresent==="Y"&&<EI value={d.blockerText} onChange={s("blockerText")} style={{color:"#fca5a5",fontSize:11,marginTop:6}} placeholder="Describe blocker..."/>}</div>
+                :<div>
+                  <div style={{fontSize:13,fontWeight:700,color:d.blockerPresent==="Y"?"#f87171":"#64748b",marginBottom:d.blockerPresent==="Y"?4:0}}>{d.blockerPresent==="Y"?"Yes":"No"}</div>
+                  {d.blockerPresent==="Y"&&d.blockerText&&<div style={{fontSize:11,color:"#fca5a5"}}>{d.blockerText}</div>}
+                </div>}
+            </div>
+
+            {/* Escalation */}
+            <div style={{background:d.escalation==="Y"?"rgba(245,158,11,0.1)":"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid "+(d.escalation==="Y"?"rgba(245,158,11,0.4)":"rgba(99,102,241,0.2)")}}>
+              <div style={{fontSize:10,color:d.escalation==="Y"?"#fbbf24":"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>⚠️ Escalation</div>
+              {edit?<YN val={d.escalation} set={s("escalation")} size="small"/>
+                   :<div style={{fontSize:13,fontWeight:700,color:d.escalation==="Y"?"#fbbf24":"#64748b"}}>{d.escalation==="Y"?"Yes — Escalated":"No"}</div>}
+            </div>
+
+            {/* Last Updated */}
+            <div style={{background:"rgba(99,102,241,0.1)",borderRadius:12,padding:12,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>Last Updated</div>
+              <div style={{fontSize:12,fontWeight:600,color:"#94a3b8"}}>{d.lastUpdated||"—"}</div>
+              {edit&&<button onClick={()=>s("lastUpdated")(today())} style={{marginTop:4,background:"#334155",border:"none",color:"#94a3b8",borderRadius:6,padding:"3px 8px",fontSize:10,cursor:"pointer"}}>Update to Today</button>}
+            </div>
+          </div>
+
+          {/* Next Milestone */}
+          <div style={{marginTop:12,background:"rgba(99,102,241,0.08)",borderRadius:10,padding:"10px 14px",border:"1px solid rgba(99,102,241,0.15)"}}>
+            <div style={{fontSize:10,color:"#6366f1",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>🎯 Next Milestone</div>
+            {edit?<EI value={d.nextMilestone} onChange={s("nextMilestone")} style={{color:"#e2e8f0",fontSize:13}} placeholder="e.g. Client confirmation by Friday..."/>
+                 :<div style={{fontSize:13,color:"#e2e8f0",fontWeight:500}}>{d.nextMilestone||"No milestone set"}</div>}
+          </div>
+        </Card>
+
+        {/* ══════════════════════════════════════════
+            LAYER 2 — PM CONTROL
+        ══════════════════════════════════════════ */}
+        <div style={{marginBottom:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <div style={{width:3,height:20,background:"#f59e0b",borderRadius:2}}/>
+            <span style={{fontSize:12,fontWeight:700,color:"#f59e0b",textTransform:"uppercase",letterSpacing:"0.1em"}}>Layer 2 — PM Control</span>
+            <span style={{fontSize:11,color:"#334155"}}>Your world</span>
+          </div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16,marginBottom:16}}>
+
+          {/* CLIENT DELIVERABLES */}
+          <Card>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <SL color="#22d3ee">📋 Client Deliverables</SL>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:60,height:4,background:"#334155",borderRadius:4}}>
+                  <div style={{height:4,borderRadius:4,background:"#22d3ee",width:clientPct+"%",transition:"width 0.3s"}}/>
+                </div>
+                <span style={{fontSize:10,color:"#22d3ee",fontWeight:700}}>{clientPct}%</span>
+              </div>
+            </div>
+            {Object.entries(clientDelivLabels).map(([key,label])=>(
+              <DelivCheck key={key} label={label} val={d[key]} set={s(key)} editMode={true}/>
+            ))}
+          </Card>
+
+          {/* INTERNAL DELIVERABLES */}
+          <Card>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <SL color="#f59e0b">⚙️ Internal Deliverables</SL>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:60,height:4,background:"#334155",borderRadius:4}}>
+                  <div style={{height:4,borderRadius:4,background:"#f59e0b",width:internalPct+"%",transition:"width 0.3s"}}/>
+                </div>
+                <span style={{fontSize:10,color:"#f59e0b",fontWeight:700}}>{internalPct}%</span>
+              </div>
+            </div>
+            {Object.entries(internalDelivLabels).map(([key,label])=>(
+              <DelivCheck key={key} label={label} val={d[key]} set={s(key)} editMode={true}/>
+            ))}
+          </Card>
+
+          {/* DATES */}
+          <Card>
+            <SL color="#34d399">📅 Key Dates</SL>
+            {[
+              {label:"Kickoff Date",       key:"kickoffDate",          color:"#94a3b8"},
+              {label:"Install Date",       key:"installDate",          color:"#fbbf24"},
+              {label:"Target Go-Live",     key:"goLiveTarget",         color:"#34d399"},
+              {label:"Last Client Touch",  key:"lastClientTouchpoint", color:"#22d3ee"},
+              {label:"Last Internal Update",key:"lastInternalUpdate",  color:"#a78bfa"},
+            ].map(({label,key,color})=>(
+              <div key={key} style={iRow}>
+                <span style={iLbl}>{label}</span>
+                {edit?<EI value={d[key]} onChange={s(key)} style={{color,textAlign:"right",fontSize:12}} placeholder="MM/DD/YYYY"/>
+                     :<span style={{fontSize:12,fontWeight:600,color,textAlign:"right"}}>{d[key]||"—"}</span>}
+              </div>
+            ))}
+            <div style={{marginTop:10}}>
+              <SL color="#ef4444">🚨 Blocker Detail</SL>
+              {[
+                {label:"What is blocked", key:"blockerWhat",  color:"#fca5a5"},
+                {label:"Who owns it",     key:"blockerOwner", color:"#fca5a5"},
+                {label:"Since",          key:"blockerSince",  color:"#fca5a5"},
+              ].map(({label,key,color})=>(
+                <div key={key} style={iRow}>
+                  <span style={iLbl}>{label}</span>
+                  {edit?<EI value={d[key]} onChange={s(key)} style={{color,textAlign:"right",fontSize:12}} placeholder="—"/>
+                       :<span style={{fontSize:12,fontWeight:600,color,textAlign:"right"}}>{d[key]||"—"}</span>}
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* RISKS & NEXT STEPS */}
+          <Card>
+            <SL color="#f87171">⚠️ Risks & Next Steps</SL>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,color:"#64748b",fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Risks</div>
+              {edit?<textarea value={d.risks||""} onChange={e=>s("risks")(e.target.value)} rows={4} style={taStyle}/>
+                   :<div>{(d.risks||"").split("\n").filter(Boolean).map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,background:"rgba(239,68,68,0.08)",borderRadius:8,padding:"6px 10px",marginBottom:4}}>
+                      <span style={{color:"#f87171",fontSize:10,marginTop:2}}>▸</span>
+                      <span style={{fontSize:12,color:"#fca5a5"}}>{line.replace(/^[•\-]\s*/,"")}</span>
+                    </div>
+                  ))}{!d.risks&&<div style={{fontSize:12,color:"#334155"}}>No risks noted</div>}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:10,color:"#64748b",fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Next Steps</div>
+              {edit?<textarea value={d.nextSteps||""} onChange={e=>s("nextSteps")(e.target.value)} rows={4} style={taStyle}/>
+                   :<div>{(d.nextSteps||"").split("\n").filter(Boolean).map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,background:"rgba(99,102,241,0.08)",borderRadius:8,padding:"6px 10px",marginBottom:4}}>
+                      <span style={{color:"#818cf8",fontSize:10,marginTop:2}}>▸</span>
+                      <span style={{fontSize:12,color:"#c7d2fe"}}>{line.replace(/^[•\-]\s*/,"")}</span>
+                    </div>
+                  ))}{!d.nextSteps&&<div style={{fontSize:12,color:"#334155"}}>No next steps added</div>}</div>}
+            </div>
+          </Card>
+        </div>
+
+        {/* ══════════════════════════════════════════
+            LAYER 3 — FULL DETAIL (collapsible)
+        ══════════════════════════════════════════ */}
+        <div style={{borderRadius:16,border:"1px solid #334155",overflow:"hidden"}}>
+          <button onClick={()=>setLayer3Open(v=>!v)}
+            style={{width:"100%",background:"#1e293b",border:"none",padding:"14px 20px",
+              display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:3,height:20,background:"#475569",borderRadius:2}}/>
+              <span style={{fontSize:12,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:"0.1em"}}>Layer 3 — Full Detail</span>
+              <span style={{fontSize:11,color:"#334155"}}>Shipping · Network · Site · Devices · Notes</span>
+            </div>
+            <span style={{fontSize:16,color:"#475569",transition:"transform 0.2s",transform:layer3Open?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+          </button>
+
+          {layer3Open&&(
+            <div style={{padding:"16px 20px 20px",background:"#0f172a"}}>
+
+              {/* GO/NO GO strip */}
+              <div style={{borderRadius:12,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:16,background:finalGo?"#052e16":"#450a0a",border:"1px solid "+(finalGo?"#166534":"#7f1d1d")}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:18}}>{finalGo?"✅":"🚫"}</span>
+                  <div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:"0.1em"}}>Install Readiness</div>
+                    <div style={{fontSize:15,fontWeight:900,color:finalGo?"#86efac":"#fca5a5"}}>{finalGo?"GO — Ready":"NO GO — Action Required"}</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {[["Network",d.networkReady],["Power",d.powerAvailable],["Devices",d.devicesConfigured]].map(([l,v])=>(
+                    <span key={l} style={{padding:"3px 8px",borderRadius:8,fontSize:11,fontWeight:700,background:v==="Y"?"#166534":"#7f1d1d",color:"#fff"}}>
+                      {l}: {v} {edit&&<span onClick={()=>s(l==="Network"?"networkReady":l==="Power"?"powerAvailable":"devicesConfigured")(v==="Y"?"N":"Y")} style={{cursor:"pointer",marginLeft:2}}>⇄</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Detail tabs */}
+              <div style={{display:"flex",gap:0,borderBottom:"1px solid #334155",marginBottom:16,overflowX:"auto"}}>
+                {DETAIL_TABS.map(t=>(
+                  <button key={t.id} onClick={()=>setDetailTab(t.id)}
+                    style={{padding:"10px 16px",fontSize:11,fontWeight:600,whiteSpace:"nowrap",background:"transparent",cursor:"pointer",border:"none",borderBottom:"2px solid "+(detailTab===t.id?"#6366f1":"transparent"),color:detailTab===t.id?"#fff":"#64748b"}}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* SHIPPING */}
+              {detailTab==="shipping"&&(
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+                  <Card>
+                    <SL>🚚 Shipping Tracking</SL>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                      {[{label:"Shipped",key:"shipped",yn:true},{label:"Carrier",key:"shipCarrier",color:"#fff"},{label:"Delivery",key:"deliveryDate",color:"#fbbf24"}].map(({label,key,color,yn})=>(
+                        <div key={label} style={{background:"rgba(51,65,85,0.4)",borderRadius:10,padding:10}}>
+                          <div style={{fontSize:10,color:"#64748b",marginBottom:4}}>{label}</div>
+                          {yn&&edit?<YN val={d[key]} set={s(key)} size="small"/>
+                           :edit?<EI value={d[key]} onChange={s(key)} style={{color:color||"#fff",fontWeight:600,fontSize:12}}/>
+                           :yn?<div style={{fontSize:12,fontWeight:700,color:d[key]==="Y"?"#34d399":"#f87171"}}>{d[key]==="Y"?"Yes":"No"}</div>
+                           :<div style={{fontSize:12,fontWeight:700,color:color||"#fff"}}>{d[key]||"—"}</div>}
+                        </div>
+                      ))}
+                      <div style={{background:"rgba(51,65,85,0.4)",borderRadius:10,padding:10}}>
+                        <div style={{fontSize:10,color:"#64748b",marginBottom:4}}>Tracking #</div>
+                        {edit?<div><EI value={d.trackingNumber} onChange={s("trackingNumber")} style={{color:"#22d3ee",fontWeight:600,fontSize:12,marginBottom:2}}/><EI value={d.trackingLink} onChange={s("trackingLink")} style={{color:"#818cf8",fontSize:10}}/></div>
+                             :d.trackingLink?<a href={d.trackingLink} target="_blank" rel="noreferrer" style={{fontSize:12,fontWeight:700,color:"#22d3ee",textDecoration:"underline"}}>{d.trackingNumber||"Track ↗"}</a>
+                             :<div style={{fontSize:12,fontWeight:700,color:"#22d3ee"}}>{d.trackingNumber||"—"}</div>}
+                      </div>
+                    </div>
+                  </Card>
+                  <Card>
+                    <SL>📍 Site Address</SL>
+                    <div style={{background:"rgba(51,65,85,0.4)",borderRadius:10,padding:12,marginBottom:10}}>
+                      {edit?<textarea value={d.siteAddress||""} onChange={e=>s("siteAddress")(e.target.value)} rows={2} style={{...taStyle,background:"transparent",border:"none",borderBottom:"1px dashed #475569",borderRadius:0,padding:"2px 0"}}/>
+                           :<div style={{color:"#fff",fontSize:13,lineHeight:1.6,whiteSpace:"pre-line"}}>{d.siteAddress||"—"}</div>}
+                    </div>
+                    <SL>📦 Shipping Address</SL>
+                    <div style={{background:"rgba(51,65,85,0.4)",borderRadius:10,padding:12,marginBottom:8}}>
+                      {edit?<textarea value={d.shippingAddress||""} onChange={e=>s("shippingAddress")(e.target.value)} rows={2} style={{...taStyle,background:"transparent",border:"none",borderBottom:"1px dashed #475569",borderRadius:0,padding:"2px 0"}}/>
+                           :<div style={{color:"#fff",fontSize:13,lineHeight:1.6,whiteSpace:"pre-line"}}>{d.shippingAddress||"—"}</div>}
+                    </div>
+                    <div style={{fontSize:11,color:"#64748b",marginBottom:4}}>Attn</div>
+                    {edit?<EI value={d.shippingAttn} onChange={s("shippingAttn")} style={{color:"#c4b5fd",fontWeight:600}}/>
+                         :<div style={{fontSize:12,fontWeight:600,color:"#c4b5fd"}}>{d.shippingAttn||"—"}</div>}
+                  </Card>
+                </div>
+              )}
+
+              {/* NETWORK */}
+              {detailTab==="network"&&(
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+                  <Card>
+                    <SL>🌐 Network Type</SL>
+                    {["WiFi","Ethernet","Cellular"].map(t=>(
+                      <button key={t} onClick={()=>edit&&s("networkType")(t)}
+                        style={{width:"100%",padding:"10px 14px",borderRadius:10,marginBottom:6,border:"1px solid "+(d.networkType===t?"#6366f1":"#334155"),background:d.networkType===t?"rgba(99,102,241,0.2)":"rgba(51,65,85,0.4)",color:d.networkType===t?"#fff":"#64748b",fontWeight:700,fontSize:13,textAlign:"left",cursor:edit?"pointer":"default",display:"flex",alignItems:"center",gap:8}}>
+                        {t==="WiFi"?"📶":t==="Ethernet"?"🔌":"📡"} {t}
+                        {d.networkType===t&&<span style={{marginLeft:"auto",width:6,height:6,borderRadius:"50%",background:"#818cf8"}}/>}
+                      </button>
+                    ))}
+                  </Card>
+                  <Card>
+                    <SL>🔐 Network Config</SL>
+                    <div style={{background:"rgba(51,65,85,0.4)",borderRadius:10,padding:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div><div style={{fontSize:13,fontWeight:600,color:"#fff",marginBottom:2}}>Stored in 1Password</div><div style={{fontSize:11,color:"#64748b"}}>Credentials in 1Password vault</div></div>
+                      {edit?<YN val={d.networkConfigIn1P} set={s("networkConfigIn1P")}/>
+                           :<span style={{padding:"5px 12px",borderRadius:8,fontSize:12,fontWeight:700,background:d.networkConfigIn1P==="Y"?"rgba(5,46,22,0.8)":"rgba(69,10,10,0.8)",color:d.networkConfigIn1P==="Y"?"#34d399":"#f87171"}}>{d.networkConfigIn1P==="Y"?"Yes":"No"}</span>}
+                    </div>
+                    <div style={{marginTop:12,padding:"10px 14px",background:"rgba(51,65,85,0.4)",borderRadius:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:13,color:"#cbd5e1"}}>WiFi Config Required?</span>
+                        {edit?<YN val={d.wifiConfigRequired} set={s("wifiConfigRequired")}/>
+                             :<span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:6,background:d.wifiConfigRequired==="Y"?"rgba(120,53,15,0.8)":"#1e293b",color:d.wifiConfigRequired==="Y"?"#fcd34d":"#64748b"}}>{d.wifiConfigRequired==="Y"?"Yes — USB needed":"No"}</span>}
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {/* SITE */}
+              {detailTab==="site"&&(
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+                  <Card>
+                    <SL>🏗️ Site Conditions</SL>
+                    {[{l:"PPE",k:"ppe"},{l:"Union Rules",k:"unionRules"},{l:"Work Hours",k:"workHours"},{l:"Ceiling Type",k:"ceilingType"},{l:"Mounting Type",k:"mountingType"}].map(({l,k})=>(
+                      <div key={k} style={iRow}>
+                        <span style={iLbl}>{l}</span>
+                        {edit?<EI value={d[k]} onChange={s(k)} style={{color:"#e2e8f0",textAlign:"right",fontSize:12}}/>
+                             :<span style={{fontSize:12,fontWeight:600,color:"#e2e8f0"}}>{d[k]||"—"}</span>}
+                      </div>
+                    ))}
+                    <div style={iRow}><span style={iLbl}>Site Survey</span>
+                      {edit?<EI value={d.siteSurveyLink} onChange={s("siteSurveyLink")} style={{color:"#818cf8",textAlign:"right",fontSize:12}}/>
+                           :d.siteSurveyLink?<a href={d.siteSurveyLink} target="_blank" rel="noreferrer" style={{fontSize:12,fontWeight:600,color:"#818cf8",textDecoration:"underline"}}>View ↗</a>:<span style={{fontSize:12,color:"#334155"}}>Not added</span>}
+                    </div>
+                  </Card>
+                  <Card>
+                    <SL>🔑 Access Contact</SL>
+                    <div style={{display:"flex",alignItems:"center",gap:12,background:"rgba(51,65,85,0.4)",borderRadius:10,padding:12,marginBottom:10}}>
+                      <div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,#f59e0b,#ea580c)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,flexShrink:0}}>{initials(d.accessName)}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        {edit?<EI value={d.accessName} onChange={s("accessName")} style={{color:"#fff",fontWeight:700}}/>:<div style={{fontWeight:700,color:"#fff",fontSize:13}}>{d.accessName||"—"}</div>}
+                        {edit?<EI value={d.accessEmail} onChange={s("accessEmail")} style={{color:"#94a3b8",fontSize:11}}/>:<div style={{color:"#94a3b8",fontSize:11}}>{d.accessEmail||"—"}</div>}
+                        {edit?<EI value={d.accessPhone} onChange={s("accessPhone")} style={{color:"#fbbf24",fontSize:12}}/>:<div style={{color:"#fbbf24",fontSize:12,fontWeight:600}}>{d.accessPhone||"—"}</div>}
+                      </div>
+                    </div>
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:10,color:"#64748b",fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Access Type</div>
+                      {edit?<select value={d.accessType} onChange={e=>s("accessType")(e.target.value)} style={selStyle}><option>Badge Access</option><option>Escort</option><option>Other</option></select>
+                           :<span style={{padding:"3px 10px",borderRadius:8,fontSize:12,fontWeight:700,background:d.accessType==="Badge Access"?"rgba(5,46,22,0.8)":"rgba(120,53,15,0.8)",color:d.accessType==="Badge Access"?"#34d399":"#fcd34d"}}>{d.accessType==="Badge Access"?"🪪":"👮"} {d.accessType}</span>}
+                    </div>
+                    <div style={{fontSize:10,color:"#64748b",fontWeight:600,textTransform:"uppercase",marginBottom:4}}>Notes</div>
+                    {edit?<textarea value={d.accessNote||""} onChange={e=>s("accessNote")(e.target.value)} rows={2} style={taStyle}/>
+                         :<div style={{fontSize:12,color:"#cbd5e1",background:"rgba(51,65,85,0.4)",borderRadius:8,padding:"8px 10px"}}>{d.accessNote||"—"}</div>}
+                  </Card>
+                </div>
+              )}
+
+              {/* DEVICES */}
+              {detailTab==="devices"&&(
+                <div>
+                  <Card style={{marginBottom:12}}>
+                    <SL>📦 Order Status</SL>
+                    <div style={{display:"flex",alignItems:"flex-start",marginBottom:16}}>
+                      {ORDER.map((step,i)=>(
+                        <div key={step} style={{display:"flex",alignItems:"center",flex:1}}>
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1}}>
+                            <button onClick={()=>edit&&s("orderStatus")(step)} style={{width:26,height:26,borderRadius:"50%",border:"none",cursor:edit?"pointer":"default",fontWeight:900,fontSize:10,background:i<=oidx?OCOL[i]:"#334155",color:i<=oidx?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center"}}>{i<oidx?"✓":i+1}</button>
+                            <div style={{fontSize:9,marginTop:3,textAlign:"center",fontWeight:i===oidx?700:400,color:i===oidx?"#fff":"#64748b",lineHeight:1.2}}>{step}</div>
+                          </div>
+                          {i<ORDER.length-1&&<div style={{height:1,flex:1,marginBottom:14,background:i<oidx?"#6366f1":"#334155"}}/>}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{borderRadius:10,overflow:"hidden",border:"1px solid #334155",marginBottom:10}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead><tr style={{background:"rgba(51,65,85,0.5)"}}>{["Device","Qty","Ship List",""].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",color:"#64748b",fontWeight:600,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {d.devices.map((dv,i)=>(
+                            <tr key={i} style={{borderTop:"1px solid #334155"}}>
+                              <td style={{padding:"8px 12px"}}>{edit?<EI value={dv.type} onChange={v=>updDev(i,"type",v)} style={{color:"#fff",fontWeight:600}}/>:<span style={{color:"#fff",fontWeight:600}}>{dv.type||"—"}</span>}</td>
+                              <td style={{padding:"8px 12px"}}>{edit?<EI value={dv.qty} onChange={v=>updDev(i,"qty",v)} style={{color:"#22d3ee",fontWeight:700,width:40}}/>:<span style={{color:"#22d3ee",fontWeight:700}}>{dv.qty||"—"}</span>}</td>
+                              <td style={{padding:"8px 12px"}}>{edit?<EI value={dv.shipListLink} onChange={v=>updDev(i,"shipListLink",v)} style={{color:"#818cf8",fontSize:11}}/>:dv.shipListLink?<a href={dv.shipListLink} target="_blank" rel="noreferrer" style={{color:"#818cf8",textDecoration:"underline",fontSize:11}}>View ↗</a>:<span style={{color:"#334155",fontSize:11}}>—</span>}</td>
+                              <td style={{padding:"8px 12px"}}>{edit&&<button onClick={()=>delDev(i)} style={{background:"transparent",border:"none",color:"#475569",fontSize:14,cursor:"pointer"}} onMouseOver={e=>e.target.style.color="#ef4444"} onMouseOut={e=>e.target.style.color="#475569"}>×</button>}</td>
+                            </tr>
+                          ))}
+                          {d.devices.length===0&&<tr><td colSpan={4} style={{padding:"16px 12px",textAlign:"center",color:"#334155",fontSize:12}}>No devices added</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                    {edit&&<button onClick={addDev} style={{background:"transparent",border:"none",color:"#818cf8",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add device row</button>}
+                  </Card>
+                  <Card>
+                    <SL>🔧 Installation</SL>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      {[{l:"Installer",k:"installerName",c:"#67e8f9"},{l:"Install Date",k:"installDate",c:"#fbbf24"},{l:"Work Hours",k:"workHours",c:"#94a3b8"}].map(({l,k,c})=>(
+                        <div key={k} style={iRow}>
+                          <span style={iLbl}>{l}</span>
+                          {edit?<EI value={d[k]} onChange={s(k)} style={{color:c,fontSize:12,textAlign:"right"}}/>:<span style={{fontSize:12,fontWeight:600,color:c}}>{d[k]||"—"}</span>}
+                        </div>
+                      ))}
+                      {[{l:"Self Install",k:"selfInstall"},{l:"Construction",k:"construction"},{l:"Install Tool",k:"addedToInstallTool"}].map(({l,k})=>(
+                        <div key={k} style={iRow}>
+                          <span style={iLbl}>{l}</span>
+                          {edit?<YN val={d[k]} set={s(k)} size="small"/>
+                               :<span style={{fontSize:11,fontWeight:700,color:d[k]==="Y"?"#34d399":"#64748b"}}>{d[k]==="Y"?"Yes":"No"}</span>}
+                        </div>
+                      ))}
+                    </div>
+                    {d.whatsappLink&&<div style={{marginTop:10}}>
+                      <a href={d.whatsappLink} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:8,background:"rgba(5,46,22,0.6)",border:"1px solid #166534",borderRadius:10,padding:"8px 14px",color:"#4ade80",fontWeight:700,fontSize:12}}>
+                        <span style={{fontSize:16}}>💬</span> Open WhatsApp Chat ↗
+                      </a>
+                    </div>}
+                    {edit&&<div style={{marginTop:8}}><div style={{fontSize:10,color:"#64748b",marginBottom:4}}>WhatsApp Link</div><EI value={d.whatsappLink} onChange={s("whatsappLink")} style={{color:"#4ade80",fontSize:12}}/></div>}
+                  </Card>
+                </div>
+              )}
+
+              {/* NOTES */}
+              {detailTab==="notes"&&(
+                <div style={{maxWidth:700}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                    <SL>📝 Project Notes</SL>
+                    <button onClick={()=>setShowAddNote(v=>!v)} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{showAddNote?"✕ Cancel":"+ Add Note"}</button>
+                  </div>
+                  {showAddNote&&(
+                    <Card style={{marginBottom:12}}>
+                      <input value={newAuthor} onChange={e=>setNewAuthor(e.target.value)} placeholder="Your name (optional)" style={{width:"100%",background:"#334155",border:"1px solid #475569",color:"#fff",fontSize:12,borderRadius:8,padding:"8px 12px",outline:"none",marginBottom:8,fontFamily:"inherit"}}/>
+                      <textarea value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Type your note..." rows={3} style={{...taStyle,marginBottom:8}}/>
+                      <button onClick={saveNote} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save Note</button>
+                    </Card>
+                  )}
+                  {d.notes.length===0&&<div style={{textAlign:"center",color:"#334155",padding:"32px 0",fontSize:13}}>No notes yet.</div>}
+                  {[...d.notes].sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0)).map(n=>(
+                    <div key={n.id} style={{borderRadius:14,padding:14,marginBottom:10,border:"1px solid "+(n.pinned?"#92400e":"#334155"),background:n.pinned?"rgba(120,53,15,0.2)":"#1e293b"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,#6366f1,#8b5cf6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:900,flexShrink:0}}>{initials(n.author)}</div>
+                          <div><div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{n.author}</div><div style={{fontSize:10,color:"#64748b"}}>{n.date}</div></div>
+                          {n.pinned&&<span>📌</span>}
+                        </div>
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={()=>pinNote(n.id)} style={{background:n.pinned?"rgba(120,53,15,0.6)":"#334155",color:n.pinned?"#fcd34d":"#94a3b8",border:"none",borderRadius:8,padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>{n.pinned?"Unpin":"Pin"}</button>
+                          <button onClick={()=>delNote(n.id)} style={{background:"#334155",color:"#94a3b8",border:"none",borderRadius:8,padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Delete</button>
+                        </div>
+                      </div>
+                      <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.6}}>{n.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────────
+function App() {
+  const [projects,setProjects]=useState(()=>{ try{const s=localStorage.getItem("vs_projects");return s?JSON.parse(s):[]; }catch(e){return [];} });
+  const [activeId,setActiveId]=useState(null);
+
+  useEffect(()=>{ try{localStorage.setItem("vs_projects",JSON.stringify(projects));}catch(e){} },[projects]);
+
+  const createProject=(clientName,siteName,floorName)=>{
+    const p=BLANK(clientName,siteName,floorName);
+    setProjects(prev=>[p,...prev]); setActiveId(p.id);
+  };
+  const saveProject=updated=>setProjects(prev=>prev.map(p=>p.id===updated.id?updated:p));
+  const deleteProject=id=>{ setProjects(prev=>prev.filter(p=>p.id!==id)); if(activeId===id)setActiveId(null); };
+  const active=projects.find(p=>p.id===activeId);
+
+  if(active) return <ProjectDashboard project={active} onSave={saveProject} onBack={()=>setActiveId(null)}/>;
+  return <ProjectList projects={projects} onOpen={setActiveId} onCreate={createProject} onDelete={deleteProject}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
