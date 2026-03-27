@@ -339,6 +339,17 @@ function ProjectDashboard({project,onSave,onBack,syncing}) {
                 {d.floorName&&<span style={{color:"#64748b",fontWeight:400,fontSize:13}}> · {d.floorName}</span>}
               </div>
             )}
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+              {edit
+                ? <EI value={d.salesforceLink} onChange={s("salesforceLink")} style={{color:"#38bdf8",fontSize:11,width:220}} placeholder="Paste Salesforce Opportunity URL..."/>
+                : d.salesforceLink
+                  ? <a href={d.salesforceLink} target="_blank" rel="noreferrer"
+                      style={{fontSize:11,color:"#38bdf8",textDecoration:"underline",display:"flex",alignItems:"center",gap:4}}>
+                      ☁️ Salesforce Opportunity ↗
+                    </a>
+                  : <span style={{fontSize:11,color:"#334155"}}>No Salesforce link</span>
+              }
+            </div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
             {syncing&&<span style={{fontSize:11,color:"#6366f1"}}>⟳ Saving...</span>}
